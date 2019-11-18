@@ -8,7 +8,7 @@ Looking at the state at block =8928268=, which is the block after what appears t
 
 ** Status
 
-Currently, this procedure still leaves **51 keys** unattributed.
+Currently, this procedure still leaves *51 keys* unattributed.
 
 ** Procedure
 
