@@ -1,0 +1,71 @@
+* Auditing the deployment of =dss=
+** Enumerating the =Vat= wards after deploy
+Our goal is to enumerate all of the contracts that were authed to the =Vat= at a particular point in time. If we know and understand all of those contracts (and how they were deployed, and their creators were deployed, and so on), then we now how auth in the =Vat= can change in the future as well.
+
+The procedure is a little bit tricky and laborious because while we can easily (with a Parity =fat-db= archive node) enumerate all of the nonzero storage keys in the =Vat= at the EVM-level, we also need to find the preimages of the hashes of solidity =mapping= keys. This means we must work from our expectations of which storage keys could have been nonzero, and see how many mystery keys we can attribute.
+
+Looking at the state at block =8928268=, which is the block after what appears to be the last deployment transaction to =DssDeploy= (=0x9e209b04b3c610a8e6bfaf398bf432efe6ac0bc6179948e97d4f74b8149d9fa8=), there are 68 nonzero storage keys in the =Vat= to be attributed.
+
+** Status
+
+Currently, this procedure still leaves **51 keys** unattributed.
+
+** Procedure
+
+First we find which methods might run in the =Vat= at deployment:
+
+#+begin_src sh
+  $ git clone git@github.com:makerdao/dss-deploy.git
+  $ cd dss-deploy && git rev-parse HEAD
+77f7e88ec50791e6700bc2ddfa4ee13df2f9b3d8
+  $ grep "vat\." src/DssDeploy.sol
+import {Vat} from "dss/vat.sol";
+        vat.rely(msg.sender);
+        vat.deny(address(this));
+        vat.rely(address(spotter));
+        vat.rely(address(jug));
+        vat.rely(address(pot));
+        vat.rely(address(cat));
+        vat.rely(address(end));
+        vat.rely(address(pause.proxy()));
+        vat.init(ilk);
+        vat.rely(join);
+        vat.deny(address(this));
+#+end_src
+
+We also look for other calls to the =Vat= which might happen at deployment:
+
+#+begin_src sh
+  $ git clone git@github.com:makerdao/dss.git
+  $ cd dss && git rev-parse HEAD
+6fd7de01e3807e65edbcab52591828d93adea539
+  $ grep "vat\.hope" src/*.sol
+src/cat.sol:            vat.hope(flip);
+src/end.sol:        vat.hope(address(flip));
+src/vow.sol:        vat.hope(flapper_);
+src/vow.sol:            vat.hope(data);
+#+end_src
+
+Then we find the addresses of these contracts on mainnet:
+
+#+begin_src sh
+  $ wget https://changelog.makerdao.com/releases/mainnet/1.0.0/contracts.json
+  $ sha256sum contracts.json
+3e06ce6084fb22132b518a120b6b08b3cf7dde582a2d4942d98bd58a44ce8358  contracts.json
+#+end_src
+
+With a =--fat-db=on= parity node, we can find all of the nonzero storage keys in the =Vat= at the current block, and save them to a file:
+
+#+begin_src sh
+  $ grep VAT contracts.json
+  "MCD_VAT": "0x35d1b3f3d7966a1dfe207aa4514c12a259a0492b",
+  $ export VAT_ADDRESS="0x35d1b3f3d7966a1dfe207aa4514c12a259a0492b"
+  $ export BLOCK_NUMBER=8928268
+  $ curl --data '{"method":"parity_listStorageKeys","params":["$VAT_ADDRESS",200,null,$BLOCK_NUMBER],"id":1,"jsonrpc":"2.0"}' -H "Content-Type: application/json" -X POST localhost:8545 | jq '.result' > vat_keys_block_$BLOCK_NUMBER.json
+#+end_src
+
+Lastly, we run the script which attempts to eliminate the expected storage keys from the list of all nonzero keys, using the information we gathered above:  
+
+#+begin_src sh
+  $ ./verify.py --contracts contracts.json vat_keys_block_8928268.json
+#+end_src
